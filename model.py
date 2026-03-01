@@ -9,15 +9,30 @@ class OpenRouterModel():
     # return a model given the API (openrouter)
     def __init__(self, log_level=logging.INFO):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model_name = "openrouter/pony-alpha" # currently, we choose cheap one to test.
+        self.model_name = "qwen/qwen3.5-plus-02-15" # currently, we choose cheap one to test.
         self.client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=self.api_key)
         self.logger = setup_logger('OpenRouterModel', log_level)
         self.tools = make_schema()  # Register tools from tools.py
+        self.system_prompt = self._load_claude_md()
+
+    def _load_claude_md(self):
+        claude_md = os.path.join(os.path.dirname(__file__), "CLAUDE.md")
+        if os.path.exists(claude_md):
+            with open(claude_md) as f:
+                content = f.read().strip()
+            self.logger and self.logger.debug(f"Loaded CLAUDE.md as system prompt ({len(content)} chars)")
+            return content
+        return None
 
     def generate_response(self, messages):
+        # Prepend system prompt from CLAUDE.md if available
+        if self.system_prompt:
+            messages = [{"role": "system", "content": self.system_prompt}] + messages
+
         self.logger.debug(f"Messages sent to model ({len(messages)} total):")
         for i, msg in enumerate(messages):
-            self.logger.debug(f"  [{i}] {msg['role']}: {msg['content'][:100]}...")
+            content = msg['content'] if isinstance(msg['content'], str) else str(msg['content'])
+            self.logger.debug(f"  [{i}] {msg['role']}: {content[:100]}...")
         self.logger.debug("")
 
         # Agentic loop: keep calling tools until model returns text
