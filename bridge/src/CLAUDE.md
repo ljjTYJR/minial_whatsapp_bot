@@ -7,6 +7,9 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #480 | 9:47 AM | 🔵 | WebSocket Server Bridging Python Bot to WhatsApp Client | ~316 |
+| #479 | " | 🔵 | Node.js Bridge Using Baileys for WhatsApp Web Protocol | ~324 |
+| #475 | 9:17 AM | 🟣 | WhatsApp integration via Node.js Baileys bridge and WebSocket | ~517 |
 | #473 | 9:16 AM | 🔵 | WhatsApp bridge message filtering and self-message handling logic | ~464 |
 | #450 | 12:06 AM | 🟣 | WebSocket Bridge Server Implementation with Baileys Integration | ~405 |
 | #449 | " | 🟣 | Implemented Baileys-Based WhatsApp Client as Alternative to WAHA | ~415 |
