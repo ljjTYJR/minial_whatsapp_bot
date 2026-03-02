@@ -7,3 +7,4 @@
 - [x] Add tool so that it is a real agent!
 - [x] Make tool invoking a loop until no tool is needed: currently, it has 10 maximum iterations.
 - [x] Add CLAUDE.md as system prompt: when preparing the message, read the CLAUDE.md and add it as system prompt.
+- [x] Allow connect to whatsapp.

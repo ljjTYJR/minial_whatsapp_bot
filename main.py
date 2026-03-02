@@ -1,23 +1,33 @@
 # THe main structure of the project
-from model import OpenRouterModel
 import logging
+import sys
 
-def setup_model(log_level=logging.DEBUG):
-    model = OpenRouterModel(log_level=log_level)
-    return model
+from dotenv import load_dotenv
+load_dotenv()
 
-def main():
-    model = setup_model(log_level=logging.DEBUG)  # Use DEBUG to see all messages, INFO to hide debug
+from model import OpenRouterModel
 
+
+def run_cli():
+    model = OpenRouterModel(log_level=logging.DEBUG)
     messages = []
-    # the main agnet loop
     while True:
-        # get the user input
         user_input = input("User: ")
         messages.append({"role": "user", "content": user_input})
         response = model.generate_response(messages)
         messages.append({"role": "assistant", "content": response})
-        print("Bot: ", response)
+        print("Bot:", response)
+
+
+def run_whatsapp():
+    from whatsapp import run_bot
+    print("Starting WhatsApp bot — make sure the bridge is running:")
+    print("  cd bridge && node dist/index.js")
+    run_bot()
+
 
 if __name__ == "__main__":
-    main()
+    if "--whatsapp" in sys.argv:
+        run_whatsapp()
+    else:
+        run_cli()

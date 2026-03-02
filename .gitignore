@@ -7,3 +7,8 @@ __pycache__/
 env/
 venv/
 .env
+
+# Node.js bridge
+bridge/node_modules/
+bridge/dist/
+bridge/wa_auth/
