@@ -36,7 +36,7 @@ class OpenRouterModel():
         self.logger.debug("")
 
         # Agentic loop: keep calling tools until model returns text
-        max_iterations = 10  # Prevent infinite loops
+        max_iterations = 20  # Prevent infinite loops
         iteration = 0
 
         while iteration < max_iterations:

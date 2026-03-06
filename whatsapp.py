@@ -9,11 +9,14 @@ Setup:
     python main.py --whatsapp   # terminal 2
 """
 import asyncio
+import base64
 import json
 import logging
 import os
 from collections import OrderedDict
 
+import cv2
+import depthai as dai
 import websockets
 
 from model import OpenRouterModel
@@ -23,6 +26,23 @@ BRIDGE_TOKEN = os.getenv("BRIDGE_TOKEN", "")
 ALLOW_FROM = set(filter(None, os.getenv("ALLOW_FROM", "").split(",")))  # comma-separated phone numbers
 
 log = logging.getLogger("whatsapp")
+
+
+STREAM_TRIGGERS = {"stream", "camera", "snapshot", "photo", "pic"}
+
+
+def capture_oak_frame() -> bytes:
+    """Capture a single JPEG frame from OAK-D RGB camera."""
+    p = dai.Pipeline()
+    cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+    q = cam.requestOutput((640, 360), dai.ImgFrame.Type.BGR888p).createOutputQueue()
+    p.start()
+    try:
+        frame = q.get().getCvFrame()
+    finally:
+        p.stop()
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    return buf.tobytes()
 
 
 class WhatsAppBot:
@@ -92,6 +112,18 @@ class WhatsAppBot:
 
         log.info("Message from %s: %s", phone, content[:80])
 
+        # Check for camera trigger words
+        words = set(content.lower().split())
+        if words & STREAM_TRIGGERS:
+            await self._send(chat_id, "Capturing frame from OAK-D...")
+            try:
+                jpeg = await asyncio.get_event_loop().run_in_executor(None, capture_oak_frame)
+                await self._send_image(chat_id, jpeg, "OAK-D RGB snapshot")
+            except Exception as e:
+                log.error("Camera capture failed: %s", e)
+                await self._send(chat_id, f"Camera error: {e}")
+            return
+
         hist = self.histories.setdefault(chat_id, [])
         hist.append({"role": "user", "content": content})
 
@@ -111,6 +143,16 @@ class WhatsAppBot:
             await self._ws.send(json.dumps({"type": "send", "to": to, "text": text}, ensure_ascii=False))
         except Exception as e:
             log.error("Send failed: %s", e)
+
+    async def _send_image(self, to: str, jpeg: bytes, caption: str = ""):
+        if not self._ws:
+            log.warning("Not connected, cannot send image")
+            return
+        try:
+            payload = {"type": "send_image", "to": to, "image": base64.b64encode(jpeg).decode(), "caption": caption}
+            await self._ws.send(json.dumps(payload))
+        except Exception as e:
+            log.error("Send image failed: %s", e)
 
 
 def run_bot():
