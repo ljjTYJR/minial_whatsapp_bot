@@ -13,4 +13,11 @@
 | #473 | 9:16 AM | 🔵 | WhatsApp bridge message filtering and self-message handling logic | ~464 |
 | #450 | 12:06 AM | 🟣 | WebSocket Bridge Server Implementation with Baileys Integration | ~405 |
 | #449 | " | 🟣 | Implemented Baileys-Based WhatsApp Client as Alternative to WAHA | ~415 |
+
+### Mar 6, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #610 | 2:14 PM | 🟣 | Added image sending capability to WhatsApp bridge server | ~248 |
+| #609 | " | 🟣 | Added Image Sending to WhatsApp Client | ~282 |
 </claude-mem-context>

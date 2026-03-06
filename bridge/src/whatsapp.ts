@@ -133,6 +133,14 @@ export class WhatsAppClient {
     if (id) this.sentByBot.set(id, Date.now());
   }
 
+  async sendImage(to: string, imageBase64: string, caption?: string): Promise<void> {
+    if (!this.sock) throw new Error('Not connected');
+    const buffer = Buffer.from(imageBase64, 'base64');
+    const result = await this.sock.sendMessage(to, { image: buffer, caption: caption ?? '' });
+    const id = result?.key?.id;
+    if (id) this.sentByBot.set(id, Date.now());
+  }
+
   async disconnect(): Promise<void> {
     if (this.sock) { this.sock.end(undefined); this.sock = null; }
   }

@@ -58,6 +58,9 @@ export class BridgeServer {
         if (cmd.type === 'send' && this.wa) {
           await this.wa.sendMessage(cmd.to, cmd.text);
           ws.send(JSON.stringify({ type: 'sent', to: cmd.to }));
+        } else if (cmd.type === 'send_image' && this.wa) {
+          await this.wa.sendImage(cmd.to, cmd.image, cmd.caption);
+          ws.send(JSON.stringify({ type: 'sent', to: cmd.to }));
         }
       } catch (error) {
         ws.send(JSON.stringify({ type: 'error', error: String(error) }));
