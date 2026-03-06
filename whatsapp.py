@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import signal
 import threading
 import time
 from collections import OrderedDict
@@ -34,6 +35,7 @@ log = logging.getLogger("whatsapp")
 
 
 STREAM_TRIGGERS = {"stream", "camera", "snapshot", "photo", "pic"}
+_OAK_LOCK = threading.Lock()  # serialise all DAI pipeline open/close calls
 LIVE_LINK_TRIGGERS = {"live", "livestream", "watch", "feed", "hls", "webrtc", "rtsp"}
 AUTO_LIVE_STREAM = os.getenv("AUTO_LIVE_STREAM", "1").strip() not in {"0", "false", "False"}
 AUTO_LIVE_HOST = os.getenv("AUTO_LIVE_HOST", "127.0.0.1").strip()
@@ -63,6 +65,10 @@ class OakMjpegService:
     def start(self) -> None:
         if self._capture_thread and self._capture_thread.is_alive():
             return
+        # Clean up any dead-but-not-joined previous run
+        if self._capture_thread:
+            self._capture_thread.join(timeout=5)
+            self._capture_thread = None
 
         self._stop.clear()
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True, name="oak-capture")
@@ -77,23 +83,27 @@ class OakMjpegService:
             self._httpd.shutdown()
             self._httpd.server_close()
             self._httpd = None
+        if self._capture_thread:
+            self._capture_thread.join(timeout=5)
+            self._capture_thread = None
 
     def _capture_loop(self) -> None:
-        pipeline = dai.Pipeline()
-        cam = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-        q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
-        pipeline.start()
-        try:
-            while not self._stop.is_set() and pipeline.isRunning():
-                frame = q.get().getCvFrame()
-                ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
-                if ok:
-                    with self._latest_lock:
-                        self._latest_jpeg = buf.tobytes()
-        except Exception as exc:
-            log.error("OAK MJPEG capture failed: %s", exc)
-        finally:
-            pipeline.stop()
+        with _OAK_LOCK:
+            pipeline = dai.Pipeline()
+            cam = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+            q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
+            pipeline.start()
+            try:
+                while not self._stop.is_set() and pipeline.isRunning():
+                    frame = q.get().getCvFrame()
+                    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
+                    if ok:
+                        with self._latest_lock:
+                            self._latest_jpeg = buf.tobytes()
+            except Exception as exc:
+                log.error("OAK MJPEG capture failed: %s", exc)
+            finally:
+                pipeline.stop()
 
     def _make_http_server(self) -> server.ThreadingHTTPServer:
         parent = self
@@ -178,6 +188,7 @@ class CloudflaredTunnel:
             match = self.URL_RE.search(text)
             if match:
                 self._url = match.group(0)
+                await asyncio.sleep(3)  # wait for DNS propagation
                 return self._url
 
         await self.stop()
@@ -219,14 +230,15 @@ def build_live_stream_message() -> str:
 
 def capture_oak_frame() -> bytes:
     """Capture a single JPEG frame from OAK-D RGB camera."""
-    p = dai.Pipeline()
-    cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
-    q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
-    p.start()
-    try:
-        frame = q.get().getCvFrame()
-    finally:
-        p.stop()
+    with _OAK_LOCK:
+        p = dai.Pipeline()
+        cam = p.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A)
+        q = cam.requestOutput((OAK_FRAME_WIDTH, OAK_FRAME_HEIGHT), dai.ImgFrame.Type.BGR888p).createOutputQueue()
+        p.start()
+        try:
+            frame = q.get().getCvFrame()
+        finally:
+            p.stop()
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, OAK_JPEG_QUALITY])
     return buf.tobytes()
 
@@ -241,22 +253,39 @@ class WhatsAppBot:
         self._tunnel = CloudflaredTunnel()
 
     async def run(self):
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGTERM, lambda: loop.create_task(self._shutdown()))
+        loop.add_signal_handler(signal.SIGINT, lambda: loop.create_task(self._shutdown()))
         log.info("Connecting to bridge at %s", BRIDGE_URL)
-        while True:
-            try:
-                async with websockets.connect(BRIDGE_URL) as ws:
-                    self._ws = ws
-                    if BRIDGE_TOKEN:
-                        await ws.send(json.dumps({"type": "auth", "token": BRIDGE_TOKEN}))
-                    log.info("Connected to WhatsApp bridge")
-                    async for raw in ws:
-                        await self._handle(raw)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self._ws = None
-                log.warning("Bridge disconnected: %s — retrying in 5s", e)
-                await asyncio.sleep(5)
+        try:
+            while True:
+                try:
+                    async with websockets.connect(BRIDGE_URL) as ws:
+                        self._ws = ws
+                        if BRIDGE_TOKEN:
+                            await ws.send(json.dumps({"type": "auth", "token": BRIDGE_TOKEN}))
+                        log.info("Connected to WhatsApp bridge")
+                        async for raw in ws:
+                            await self._handle(raw)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    self._ws = None
+                    log.warning("Bridge disconnected: %s — retrying in 5s", e)
+                    await asyncio.sleep(5)
+        finally:
+            await self._cleanup()
+
+    async def _shutdown(self):
+        log.info("Shutting down...")
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
+                task.cancel()
+
+    async def _cleanup(self):
+        log.info("Cleaning up streaming resources...")
+        self._mjpeg.stop()
+        await self._tunnel.stop()
 
     async def _handle(self, raw: str):
         try:
@@ -314,7 +343,21 @@ class WhatsAppBot:
         if words & STREAM_TRIGGERS:
             await self._send(chat_id, "Capturing frame from OAK-D...")
             try:
-                jpeg = await asyncio.get_event_loop().run_in_executor(None, capture_oak_frame)
+                # If MJPEG is streaming, wait for its cached frame (shares the device)
+                if self._mjpeg._capture_thread and self._mjpeg._capture_thread.is_alive():
+                    loop = asyncio.get_event_loop()
+                    def wait_for_frame():
+                        deadline = time.time() + 3
+                        while time.time() < deadline:
+                            with self._mjpeg._latest_lock:
+                                f = self._mjpeg._latest_jpeg
+                            if f:
+                                return f
+                            time.sleep(0.05)
+                        raise RuntimeError("Timed out waiting for MJPEG frame")
+                    jpeg = await loop.run_in_executor(None, wait_for_frame)
+                else:
+                    jpeg = await asyncio.get_event_loop().run_in_executor(None, capture_oak_frame)
                 await self._send_image(chat_id, jpeg, "OAK-D RGB snapshot")
             except Exception as e:
                 log.error("Camera capture failed: %s", e)
