@@ -2,7 +2,7 @@ import os
 from openai import OpenAI
 from logger import setup_logger
 import logging
-from tools import make_schema, run_tool
+from tool import make_schema, run_tool
 import json
 
 class OpenRouterModel():
